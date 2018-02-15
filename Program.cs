@@ -20,11 +20,13 @@ namespace apitest
     public class Program
     {   
         public static bool listening = true;
-        public static void Main(string[] args)
+        public static List<TcpClient> clientList = new List<TcpClient>();
+
+        public static void Main(string[] args)        
         {
 
             StartListener();
-            Console.WriteLine("ettaerasinkmaaaarr");
+
             BuildWebHost(args).Run();
         
         }
@@ -40,6 +42,7 @@ namespace apitest
             Console.WriteLine("Server has started on 127.0.0.1:80.{0}Waiting for a connection...", Environment.NewLine);
             while(listening){
                 TcpClient client = await server.AcceptTcpClientAsync().ConfigureAwait(false);//non blocking waiting                    
+                clientList.Add(client);
                 // We are already in a new task to handle this client...
                 ThreadPool.QueueUserWorkItem(HandleClient, client);
                 //HandleClient(client);
@@ -53,8 +56,9 @@ namespace apitest
 
             Console.WriteLine("A client connected.");
             
+            NetworkStream stream = client.GetStream();
+
             while(true){
-                NetworkStream stream = client.GetStream();
 
                 while (!stream.DataAvailable);
 
@@ -62,42 +66,71 @@ namespace apitest
 
                 await stream.ReadAsync(bytes, 0, bytes.Length);
 
-                //translate bytes of request to string
-
                 String data = Encoding.UTF8.GetString(bytes);
                 
                 if (Regex.IsMatch(data, "^GET")) {
-                    Byte[] response = Encoding.UTF8.GetBytes("HTTP/1.1 101 Switching Protocols" + Environment.NewLine
-                        + "Connection: Upgrade" + Environment.NewLine
-                        + "Upgrade: websocket" + Environment.NewLine
-                        + "Sec-WebSocket-Accept: " + Convert.ToBase64String (
-                            SHA1.Create().ComputeHash (
-                                Encoding.UTF8.GetBytes (
-                                    new Regex("Sec-WebSocket-Key: (.*)").Match(data).Groups[1].Value.Trim() + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-                                )
-                            )
-                        ) + Environment.NewLine
-                        + Environment.NewLine);
 
+                    Byte[] response = handShake(data);
                     stream.Write(response, 0, response.Length);
+
                 } else {
+
                     Console.WriteLine(bytes.Length);
                     string cliData = GetDecodedData(bytes, bytes.Length);
                     Console.WriteLine(cliData);
+                    
+                    BroadCast(cliData, client);
+                    /*string message = "allt ad koma!";
 
-                    string message = "alvöru pínu success!";
+                    Byte[] encodedMessage = prepareMessage(message);
 
-                    List<byte> lb = new List<byte>();
-                    lb = new List<byte>();
-                    lb.Add(0x81);
-                    int size = message.Length;//get the message's size
-                    lb.Add((byte)size); //get the size in bytes
-                    lb.AddRange(Encoding.UTF8.GetBytes(message));
-                    await stream.WriteAsync(lb.ToArray(), 0, size+2); //I do size+2 because we have 2 bytes plus 0x81 and (byte)size
-
+                    await stream.WriteAsync(encodedMessage, 0, encodedMessage.Length); //I do size+2 because we have 2 bytes plus 0x81 and (byte)size
+                    */
                 }
-                //stream.Close();
+                stream.Flush();
             }
+
+        }
+
+        public static Byte[] handShake(String data) {
+            Byte[] response = Encoding.UTF8.GetBytes("HTTP/1.1 101 Switching Protocols" + Environment.NewLine
+                + "Connection: Upgrade" + Environment.NewLine
+                + "Upgrade: websocket" + Environment.NewLine
+                + "Sec-WebSocket-Accept: " + Convert.ToBase64String (
+                    SHA1.Create().ComputeHash (
+                        Encoding.UTF8.GetBytes (
+                            new Regex("Sec-WebSocket-Key: (.*)").Match(data).Groups[1].Value.Trim() + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+                        )
+                    )
+                ) + Environment.NewLine
+                + Environment.NewLine);
+
+            return response;
+        }
+
+        public static void BroadCast(string msg, TcpClient excludeClient)  
+        {
+            foreach (TcpClient client in clientList)
+            {
+                if (client != excludeClient)
+                {
+                    Byte[] encodedMessage = prepareMessage(msg);
+                    NetworkStream stream = client.GetStream();
+                    stream.Write(encodedMessage, 0, encodedMessage.Length);
+                    stream.Flush();
+                }  
+            }  
+        }
+
+        public static Byte[] prepareMessage(String message){
+
+            List<byte> lb = new List<byte>();
+            lb = new List<byte>();
+            lb.Add(0x81);
+            int size = message.Length;//get the message's size
+            lb.Add((byte)size); //get the size in bytes
+            lb.AddRange(Encoding.UTF8.GetBytes(message));
+            return lb.ToArray();
 
         }
 
